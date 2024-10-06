@@ -1,0 +1,160 @@
+﻿@page "/"
+
+<PageTitle>Home</PageTitle>
+<RadzenCard Variant="Variant.Outlined" class="rz-p-0" Style="width: 100%; overflow: hidden; text-align:center">
+    <RadzenButton Disabled="JobsRun" ButtonStyle="ButtonStyle.Warning" Click="RunJobsInQueue" Text="Run Jobs Queue" />
+    <RadzenButton Disabled="JobsRun" ButtonStyle="ButtonStyle.Warning" Click="RunAllJobs" Text="Run All Jobs" />
+    <RadzenButton Disabled="JobsRun" ButtonStyle="ButtonStyle.Warning" Click="RunSyncAllJobs" Text="Run Sync All Jobs" />
+    <RadzenButton Disabled="JobsRun" ButtonStyle="ButtonStyle.Warning" Click="RunParallelJobs" Text="Run Parallel Jobs" />
+
+    <RadzenButton Disabled="!JobsRun" Click="Reset" ButtonStyle="ButtonStyle.Danger" Text="Reset" />
+</RadzenCard>
+<RadzenDataList Data="@Jobs" PageSize="1000" PagerHorizontalAlign="HorizontalAlign.Left" ShowPagingSummary="true">
+    <Template Context="job">
+        <RadzenCard Variant="Variant.Outlined" class="rz-p-0" Style="width: 100%; overflow: hidden; text-align:center">
+            <RadzenRow AlignItems="AlignItems.Center" JustifyContent="JustifyContent.Center" Gap="0">
+                <RadzenColumn Size="2" class="rz-p-4 product-title">
+                    <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.H5" class="rz-color-on-secondary-lighter">@(job.JobName)</RadzenText>
+                </RadzenColumn>
+
+                <RadzenColumn Size="1">
+                    <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.H5" class="rz-mb-0">Completed</RadzenText>
+                    @if (job.JobState == JobState.Completed)
+                    {
+                        <RadzenIcon Icon="check_circle" IconColor="green"></RadzenIcon>
+                    }
+                    else
+                    {
+                        <RadzenIcon Icon="cancel" IconColor="red"></RadzenIcon>
+                    }
+                </RadzenColumn>
+                <RadzenColumn Size="1">
+                    <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.H5" class="rz-mb-0">@nameof(job.StartTime)</RadzenText>
+                    <RadzenText TextStyle="TextStyle.Body2">@job.StartTime?.ToString("T")</RadzenText>
+                </RadzenColumn>
+                <RadzenColumn>
+                    <RadzenProgressBar ProgressBarStyle="ProgressBarStyle.Success" Style="height:10px" Value="job.JobProcess" ShowValue="false" Mode="job.JobMode" />
+                </RadzenColumn>
+                <RadzenColumn Size="1">
+                    <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.H5" class="rz-mb-0">@nameof(job.EndTime)</RadzenText>
+                    <RadzenText TextStyle="TextStyle.Body2">@job.EndTime?.ToString("T")</RadzenText>
+                </RadzenColumn>
+                <RadzenColumn Size="1">
+                    <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.H5" class="rz-mb-0">Absolute Duration</RadzenText>
+                    <RadzenText TextStyle="TextStyle.Body2">@((job.EndTime - job.StartTime)?.ToString("g"))</RadzenText>
+                </RadzenColumn>       
+                <RadzenColumn Size="1">
+                    <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.H5" class="rz-mb-0">Real Duration</RadzenText>
+                    <RadzenText TextStyle="TextStyle.Body2">@((job.EndTime - StartTime)?.ToString("g"))</RadzenText>
+                </RadzenColumn>
+            </RadzenRow>
+        </RadzenCard>
+    </Template>
+</RadzenDataList>
+
+@code
+{
+    private bool JobsRun => Jobs.Any(x => x.JobState != JobState.Pending);
+    private TimeOnly StartTime { set; get; }
+
+    private IEnumerable<Job> _jobs = [];
+
+    IEnumerable<Job> Jobs
+    {
+        set => _jobs = value;
+        get => _jobs.OrderBy(x => x.EndTime ?? TimeOnly.MaxValue);
+    }
+
+    protected override void OnInitialized()
+        => Reset();
+
+    public void Reset()
+    {
+        Func<int,Task> job = async (t) =>
+        {
+            Console.WriteLine($"{Thread.CurrentThread}");
+            await Task.Delay(t * 1000);
+        };
+
+        Jobs =
+        [
+            new Job("Job 1" ,() => job(6)),
+            new Job("Job 2" ,() => job(4)),
+            new Job("Job 3" ,() => job(2)),
+            new Job("Job 4" ,() => job(1)),
+            new Job("Job 5" ,() => job(7)),
+            new Job("Job 6" ,() => job(4)),
+            new Job("Job 7" ,() => job(3)),
+            new Job("Job 8" ,() => job(1)),
+    ];
+    }
+
+    public class Job(string jobName, Func<Task> Job)
+    {
+        public string JobName { get; private init; } = jobName;
+        public TimeOnly? StartTime { get; private set; }
+        public TimeOnly? EndTime { get; private set; }
+        public JobState JobState { get; private set; } = JobState.Pending;
+        public double JobProcess => JobState == JobState.Pending ? 0 : 100;
+        public ProgressBarMode JobMode => JobState == JobState.Completed ? ProgressBarMode.Determinate : ProgressBarMode.Indeterminate;
+        public Task Run(Func<Task> reload)
+        {
+            async Task Task()
+            {
+                JobState = JobState.Running;
+
+                StartTime = TimeOnly.FromDateTime(DateTime.Now);
+
+                await reload();
+                
+                await Job();
+
+                await reload();
+
+                JobState = JobState.Completed;
+
+                EndTime = TimeOnly.FromDateTime(DateTime.Now);
+            }
+
+            return Task();
+        }
+    }
+
+    public enum JobState
+    {
+        Pending,
+        Running,
+        Completed
+    }
+
+    private async void RunJobsInQueue()
+    {
+        StartTime = TimeOnly.FromDateTime(DateTime.Now);
+        foreach (var job in Jobs)
+        {
+            await job.Run(() => InvokeAsync(StateHasChanged));
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async void RunAllJobs()
+    {
+        StartTime = TimeOnly.FromDateTime(DateTime.Now);
+        await Task.WhenAll(Jobs.Select(x => x.Run(() => InvokeAsync(StateHasChanged))));
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void RunSyncAllJobs()
+    {
+        StartTime = TimeOnly.FromDateTime(DateTime.Now);
+        Task.WaitAll(Jobs.Select(x => x.Run(() => InvokeAsync(StateHasChanged))).ToArray());
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void RunParallelJobs()
+    {
+        StartTime = TimeOnly.FromDateTime(DateTime.Now);
+        await Parallel.ForEachAsync(Jobs, new ParallelOptions() { MaxDegreeOfParallelism = 3 }, async (j, c) => await j.Run(() => InvokeAsync(StateHasChanged)));
+        await InvokeAsync(StateHasChanged);
+    }
+}
